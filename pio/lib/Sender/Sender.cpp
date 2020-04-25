@@ -190,10 +190,9 @@ bool SenderClass::sendThingSpeak(String token, long Channel)
     _client.stop();
     stopclient();
     return true;
-    }
+}
 
-
-bool SenderClass::sendGenericPost(String server, String uri, uint16_t port)
+bool SenderClass::sendGenericPost(String server, String uri, uint16_t port, bool(*bodyCallback)(String))
 {
     serializeJson(_doc, Serial);
     HTTPClient http;
@@ -215,7 +214,11 @@ bool SenderClass::sendGenericPost(String server, String uri, uint16_t port)
     {
         if (httpCode == HTTP_CODE_OK)
         {
-            CONSOLELN(http.getString());
+            if(bodyCallback) {
+                bodyCallback(http.getString());
+            } else {
+                CONSOLELN(http.getString());
+            }
         }
     }
     else

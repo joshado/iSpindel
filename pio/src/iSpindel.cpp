@@ -27,6 +27,8 @@ All rights reserverd by S.Lang <universam@web.de>
 #include "Sender.h"
 // !DEBUG 1
 
+#include "update.h"
+
 // definitions go here
 MPU6050 accelgyro;
 OneWire *oneWire;
@@ -524,20 +526,65 @@ bool processResponse(String response)
   DynamicJsonDocument doc(1024);
 
   DeserializationError error = deserializeJson(doc, response);
-  if (!error && doc.containsKey("interval"))
+  if (error)
+  {
+    return false;
+  }
+
+  bool shouldSave = false;
+
+  if(doc.containsKey("offsetAccelX") && doc.containsKey("offsetAccelY") && doc.containsKey("offsetAccelZ") &&
+     doc.containsKey("offsetGyroX") && doc.containsKey("offsetGyroY") && doc.containsKey("offsetGyroZ"))
+  {
+    my_Offset[0] = doc["offsetAccelX"];
+    my_Offset[1] = doc["offsetAccelY"];
+    my_Offset[2] = doc["offsetAccelZ"];
+    my_Offset[3] = doc["offsetGyroX"];
+    my_Offset[4] = doc["offsetGyroY"];
+    my_Offset[5] = doc["offsetGyroZ"];
+    shouldSave = true;
+  }
+
+  if(doc.containsKey("name"))
+  {
+    strcpy(my_name, doc["name"]);
+    shouldSave = true;
+  }
+  if(doc.containsKey("interval"))
   {
     uint32_t interval = doc["interval"];
-    if (interval != my_sleeptime &&
-        interval < 24 * 60 * 60 &&
-        interval > 10)
+    if (interval != my_sleeptime && interval < 24 * 60 * 60 && interval >= 10)
     {
       my_sleeptime = interval;
       CONSOLE(F("Received new Interval config: "));
       CONSOLELN(interval);
-      return saveConfig();
+      shouldSave = true;
     }
   }
-  return false;
+
+  if(shouldSave) {
+    saveConfig();
+  }
+
+  if(doc.containsKey("restart"))
+  {
+    bool shouldReboot = doc["restart"];
+    if(shouldReboot)
+    {
+      ESP.restart();
+    }
+  }
+
+  if(doc.containsKey("ota"))
+  {
+    if(!attemptFirmwareUpdate(doc["ota"]))
+    {
+      CONSOLE(F("Firmware update failed"));
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool uploadData(uint8_t service)
@@ -624,9 +671,20 @@ bool uploadData(uint8_t service)
 
     sender.add("name", my_name);
     sender.add("ID", ESP.getChipId());
+    sender.add("MD5", getCurrentFirmwareVersion());
+    sender.add("offsetAccelX",my_Offset[0]);
+    sender.add("offsetAccelY",my_Offset[1]);
+    sender.add("offsetAccelZ",my_Offset[2]);
+    sender.add("offsetGyroX",my_Offset[3]);
+    sender.add("offsetGyroY",my_Offset[4]);
+    sender.add("offsetGyroZ",my_Offset[5]);
+
     if (my_token[0] != 0)
       sender.add("token", my_token);
     sender.add("angle", Tilt);
+    sender.add("ax", ax);
+    sender.add("ay", ay);
+    sender.add("az", az);
     sender.add("temperature", scaleTemperature(Temperatur));
     sender.add("temp_units", tempScaleLabel());
     sender.add("battery", Volt);
@@ -637,7 +695,7 @@ bool uploadData(uint8_t service)
     if (service == DTHTTP)
     {
       CONSOLELN(F("\ncalling HTTP"));
-      return sender.sendGenericPost(my_server, my_uri, my_port);
+      return sender.sendGenericPost(my_server, my_uri, my_port, processResponse);
     }
     else if (service == DTCraftBeerPi)
     {
